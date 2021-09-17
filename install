@@ -6,10 +6,7 @@ fi
 
 echo installing dependencies...
 
-pacman -S --needed gcc
-pacman -S --needed binutils
-pacman -S --needed tpm2-tools
-pacman -S --needed mkinitcpio
+pacman -S --needed gcc binutils tpm2-tools mkinitcpio
 
 echo compiling...
 g++ -o /usr/bin/bytelocker bytelocker.cpp
