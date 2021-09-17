@@ -1,0 +1,20 @@
+#!/bin/bash
+if [[ $EUID -ne 0 ]]; then
+   echo "This installer must be run as root" 
+   exit 1
+fi
+
+echo installing dependencies...
+
+pacman -S --needed gcc
+pacman -S --needed binutils
+pacman -S --needed tpm2-tools
+pacman -S --needed mkinitcpio
+
+echo compiling...
+g++ -o /usr/bin/bytelocker bytelocker.cpp
+
+if [ -f /usr/bin/bytelocker ] ; then
+echo
+ echo Installation successful
+  fi
