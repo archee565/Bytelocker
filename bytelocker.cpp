@@ -3,7 +3,7 @@
  Sets up an extra EFI boot image to automatically unlock encrypted system volumes
   on startup using Trusted Platform Module 2.0.  For ArchLinux like distros. 
 
-GNU General Public License
+GNU General Public License v3.0
 
  by Peter Soltesz (archee)  2021     archee565 gmail
  */
@@ -574,6 +574,7 @@ void addLuksKey()
     // to slow down brute force attaks. For 256bit keys it's unnecessary. (2.2*10^68 Years)
     cout << "adding extra luks key\n";
     execNoPipe("dd if=/dev/random of=" LUKSKEY " bs=32 count=1 > /dev/null 2>&1");
+    filesystem::permissions(LUKSKEY,filesystem::perms::owner_read|filesystem::perms::owner_write,filesystem::perm_options::replace);
     string res;
     res = exec(string("cryptsetup luksAddKey --iter-time=60 ")+device+" "+inputkey+" " LUKSKEY);
     cout << res;
