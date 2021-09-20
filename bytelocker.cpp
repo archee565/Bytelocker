@@ -16,6 +16,7 @@ GNU General Public License v3.0
 #include <stdexcept>
 #include <memory>
 #include <map>
+#include <vector>
 #include <cstdlib>
 #include <sys/stat.h>
 
@@ -32,9 +33,17 @@ bool unplymouth = true;
 
 
 
+enum 
+{
+    Distro_not_set = 0,
+    Archish = 1,
+    Ubuntish = 2
+} systemType;
+
 string shaalg;
 string logfile;
 string bootOptionName;
+std::vector<string> cleanup_remove;
 
 void printUsage()
 {
@@ -52,11 +61,19 @@ bool fileExists(string name)
     return true;
 }
 
- string toDelete;
+
+ void cleanup()
+ {
+     for(auto file : cleanup_remove)
+     {
+         cout << "deleting: " << file << "\n";
+         filesystem::remove(file);
+     }
+ }
 
 void error(string errstr)
 {
-    if (toDelete.length()) filesystem::remove(toDelete);
+    cleanup();
     cout << logfile;
     cout << "\nbytelocker error: " << errstr << "\n\n";
     exit(-1);
@@ -89,7 +106,7 @@ bool writeToFile(string file,string data)
 {
     fstream f;
     f.open(file,fstream::out);
-    if (f.fail()) error("can't create files");
+    if (f.fail()) error(string("can't create file: ")+file);
     if (data.size()) f.write(&data[0],data.size());
     f.close();
 //    chmod(file.c_str(),__S_IREAD|__S_IWRITE); // users should not read the keyfile
@@ -118,11 +135,13 @@ void checkDeps()
     {
         error("Must be run as root.");
     }
-    if (!fileExists("/usr/bin/mkinitcpio")) error("mkinitcpio is required and only inticpio systems are supported.");
-    if (!fileExists("/usr/bin/tpm2_create")) error("tpm2_tools must be installed.");
+    if (!fileExists("/usr/bin/tpm2_create")) error("tpm2-tools must be installed.");
     if (!fileExists("/usr/bin/objcopy")) error("binutils must be installed.");
-    if (!fileExists("/usr/bin/cryptsetup")) error("cryptsetup must be installed.");
-    if (!fileExists("/usr/bin/mkinitcpio")) error("mkinitcpio must be installed.");
+    if (fileExists("/usr/bin/mkinitcpio"))  systemType = Archish;
+    if (fileExists("/usr/sbin/mkinitramfs"))  systemType = Ubuntish;
+
+    if (systemType==0) error("Can't find initramfs tools");
+//    error("mkinitcpio must be installed.");
 }
 
 string parseFindHandle(string s)
@@ -197,8 +216,9 @@ string findNVPersistentAddress(bool setup1)
     return res;
 }
 
-void stringReplace(string &s,string a,string b)
+int stringReplace(string &s,string a,string b)
 {
+    int count=0;
     int j;
     while(true)
     {
@@ -206,13 +226,33 @@ void stringReplace(string &s,string a,string b)
         if (j!=-1)
         {
             s.replace(j,a.length(),b);
+            count++;
         }
         else
         break;
     }
+    return count;
 }
 
-void genInitRamFS(string imagefile)
+
+
+void genInitRamFS_ubuntish(string imagefile)
+{
+    string crypttab = loadFile("/etc/crypttab");
+    if (crypttab.empty()) error("Cant find /etc/crypttab");
+    if (stringReplace(crypttab,   "/crypto_keyfile.bin luks,discard","bytelockerhello luks,discard,keyscript=" DATADIR "/bytelocker_unlock,initramfs")!=1) error("editing crypttab");
+    if (crypttab.find("crypto_keyfile.bin")!=-1) error("editing crypttab 2");
+
+    exec("mv /etc/crypttab /etc/crypttab.old");
+
+    writeToFile("/etc/crypttab",crypttab);
+    writeToFile(DATADIR "/crypttab.bytelocker",crypttab);
+
+    execNoPipe(string("mkinitramfs -o ")+imagefile);
+    exec("mv /etc/crypttab.old /etc/crypttab");
+}
+
+void genInitRamFS_archish(string imagefile)
 {
     // Manjaro installer builds the /crypto_keyfile.bin into the official initramfs
     // so we have to generate a custom initramfs
@@ -221,7 +261,7 @@ void genInitRamFS(string imagefile)
 
     fstream forig;
     forig.open("/etc/mkinitcpio.conf",fstream::in);
-    if (forig.fail()) error("Can't open /etc/mkinitcpio.conf\nOnly mkinitcpio systems are supported.");
+    if (forig.fail()) error("Can't open /etc/mkinitcpio.conf\n");
 
     fstream fnew;
     fnew.open(conffile,fstream::out);
@@ -296,9 +336,11 @@ string findKernel()
     string result;
     
     // newest kernel is last in alphabetic order
-    string bestkernel;
+    string bestkernel = "/boot/vmlinuz";
     double bestscore=-1.;
     map<string,int> sorted;
+
+    if (fileExists(bestkernel)) bestscore=1e120;
 
     for(const auto filename : filesystem::directory_iterator("/boot"))
     {
@@ -319,6 +361,7 @@ string findKernel()
             sorted[filename.path().string()] = 1;
         }
     }
+    
 
     cout<<"Using kernel:\n";
     for(auto it = sorted.begin(); it!=sorted.end(); it++)
@@ -338,40 +381,95 @@ string findKernel()
 
 void installHooks(string nvaddress)
 {
-    string hook = string(
-        "#!/usr/bin/bash\n"
-        "run_hook() {\n"
-        "    modprobe -a -q tpm_crb >/dev/null 2>&1\n"
-        "    tpm2_unseal -c "+nvaddress+" -p pcr:") + shaalg+PCR+" -o /crypto_keyfile.bin >/dev/null 2>&1\n"
-"if [ ! -f \"/crypto_keyfile.bin\" ]\n"
-" then\n"
-" echo Bytelocker could not decrypt the drive automatically\n"
-" echo    - booting for the first time, before uploading the keys\n"
-" echo    - updated kernel and/or initramfs\n"
-" echo    - something changed in the system\n"
-" echo\n"
-" echo\n"
-" fi\n"
-"}\n";
+    switch(systemType){
+        case Archish:
+        {
+            string hook = string(
+                "#!/usr/bin/bash\n"
+                "run_hook() {\n"
+                "    modprobe -a -q tpm_crb >/dev/null 2>&1\n"
+                "    tpm2_unseal -c "+nvaddress+" -p pcr:") + shaalg+PCR+" -o /crypto_keyfile.bin >/dev/null 2>&1\n"
+                "if [ ! -f \"/crypto_keyfile.bin\" ]\n"
+                " then\n"
+                " echo Bytelocker could not decrypt system volume automatically\n"
+                " echo    - booting for the first time, before uploading the keys\n"
+                " echo    - updated kernel and/or initramfs\n"
+                " echo    - something changed in the system\n"
+                " echo\n"
+                " echo\n"
+                " fi\n"
+                "}\n";
 
-    string installer =
-        "#!/bin/bash\n"
-        "build() {\n"
-        "    local mod\n"
-        "    add_module \"tpm_crb\"\n"
-        "    add_binary \"tpm2_unseal\"\n"
-        "    add_binary \"/usr/lib/libtss2-tcti-device.so\"\n"
-        "    add_runscript\n"
-        "}\n"
-        "help() {\n"
-        "\tcat <<HELPEOF\n"
-        "retrives the system disk encryption key from the TPM2, which will unseal it if the PCRs match\n"
-        "HELPEOF\n"
-        "}\n";
+            string installer =
+                "#!/bin/bash\n"
+                "build() {\n"
+                "    local mod\n"
+                "    add_module \"tpm_crb\"\n"
+                "    add_binary \"tpm2_unseal\"\n"
+                "    add_binary \"/usr/lib/libtss2-tcti-device.so\"\n"
+                "    add_runscript\n"
+                "}\n"
+                "help() {\n"
+                "\tcat <<HELPEOF\n"
+                "retrives the system disk encryption key from the TPM2, which will unseal it if the PCRs match\n"
+                "HELPEOF\n"
+                "}\n";
 
-    writeToFile("/usr/lib/initcpio/hooks/bytelocker",hook);
-    writeToFile("/usr/lib/initcpio/install/bytelocker",installer);
+            writeToFile("/usr/lib/initcpio/hooks/bytelocker",hook);
+            writeToFile("/usr/lib/initcpio/install/bytelocker",installer);
+        }
+        break;
 
+        case Ubuntish:
+        {
+            string bytelocker_unlock=string(
+                "#!/bin/sh\n"
+                " if [ ! -f \"./firsttry\" ]; then\n"
+                "    echo 1 > ./firsttry\n"
+                "    export TPM2TOOLS_TCTI=\"device:/dev/tpm0\"\n"
+                "    modprobe -a -q tpm_crb  > /run/initramfs/bytelocker.log 2>&1\n"
+                "    tpm2_unseal -c "+nvaddress+" -p pcr:") + shaalg+PCR+" -o ./bytelocker_key.bin > /run/initramfs/bytelocker.log 2>&1\n"
+                " if [ -f \"./bytelocker_key.bin\" ]; then\n"
+                " cat ./bytelocker_key.bin\n"
+                " exit 0\n"
+                " fi\n"
+                " fi\n"
+                "/usr/lib/cryptsetup/askpass 'Bytelocker could not unlock system volume. Please enter passphrase'\n"
+                ;
+
+            writeToFile(DATADIR "/bytelocker_unlock",bytelocker_unlock);
+            filesystem::permissions(DATADIR "/bytelocker_unlock",filesystem::perms::owner_all,filesystem::perm_options::replace);
+
+
+            string etchook=
+                "#!/bin/sh\n"
+                "PREREQ=\"\"\n"
+                "prereqs()\n"
+                " {\n"
+                "   echo \"$PREREQ\"\n"
+                " }\n"
+                "case $1 in\n"
+                " prereqs)\n"
+                "   prereqs\n"
+                "   exit 0\n"
+                "   ;;\n"
+                "esac\n"
+                ". /usr/share/initramfs-tools/hook-functions\n"
+                "copy_exec /usr/bin/tpm2_unseal\n"
+                "copy_exec /usr/lib/libtss2-tcti-device.so\n"
+                "copy_exec /usr/lib/x86_64-linux-gnu/libtss2-tcti-device.so.0\n"
+//                "echo Hello from hook\n"
+                "copy_modules_dir kernel/drivers/char/tpm\n"
+                "exit 0\n"
+                ;
+
+            string hookfilename ="/etc/initramfs-tools/hooks/bytelocker";
+            writeToFile(hookfilename,etchook);
+            filesystem::permissions(hookfilename,filesystem::perms::owner_all,filesystem::perm_options::replace);
+            cleanup_remove.push_back(hookfilename);
+        }
+        break;
+    }
 }
 
 
@@ -390,20 +488,23 @@ void genEFI(string kernel,string imagefile)
         cmdline.push_back(c );
     }
     f.close();
-//    cout << cmdline + "\n";
     writeToFile(DATADIR "/kernel-command-line.txt",cmdline);
 
-    string ucode; // combining microcode firmware into the initramfs
-    if (fileExists("/boot/amd-ucode.img")) ucode = "/boot/amd-ucode.img";
-    if (fileExists("/boot/intel-ucode.img")) ucode = "/boot/intel-ucode.img";
-    if (ucode.length())
+    if (systemType==Archish) // ubuntu includes this file already in the beginning of an initramfs. For extracting an ubuntu initramfs use binwalk to find where to split the file
     {
-        string combined = loadFile(ucode);
-        combined+=loadFile(imagefile);
-        string origImageFile = imagefile;
-        imagefile = DATADIR "/initramfs-ucode-bytelocker.img";
-        writeToFile(imagefile,combined);
-//        filesystem::remove(origImageFile); // cleanup
+        string ucode; // combining microcode firmware into the initramfs
+
+        if (fileExists("/boot/amd-ucode.img")) ucode = "/boot/amd-ucode.img";
+        if (fileExists("/boot/intel-ucode.img")) ucode = "/boot/intel-ucode.img";
+        if (ucode.length())
+        {
+            string combined = loadFile(ucode);
+            combined+=loadFile(imagefile);
+            string origImageFile = imagefile;
+            imagefile = DATADIR "/initramfs-ucode-bytelocker.img";
+            writeToFile(imagefile,combined);
+            filesystem::remove(origImageFile); // cleanup
+        }
     }
 
     execNoPipe(string("objcopy --add-section .osrel=\"/usr/lib/os-release\" --change-section-vma .osrel=0x30000 "
@@ -414,10 +515,11 @@ void genEFI(string kernel,string imagefile)
      "\"" EFI_FILE "\""
     );
 
-//    filesystem::remove(imagefile); // cleanup
-
+    filesystem::remove(imagefile); // cleanup
     if (!fileExists(EFI_FILE)) error("Failed to save EFI file to EFI partition");
 }
+
+
 
 string getDistroName()
 {
@@ -466,7 +568,6 @@ void setBootManager()
 
 string findDevice()
 {
-    //    string res = exec("mount | grep \" on / type \"");
     string lsblk = exec("lsblk --fs");
 
     int i=0;
@@ -546,8 +647,9 @@ void addLuksKey()
     if (optimizeLUKS)
     {
         string passwd = getpass("Please type your LUKS password:");
-        toDelete = "/tmp/userpass.txt";
+        string toDelete = "/tmp/userpass.txt";
         writeToFile(toDelete,passwd);
+        cleanup_remove.push_back(toDelete);
         inputkey = "--key-file /tmp/userpass.txt ";
         cout << "verifying passphrase\n";
 
@@ -574,12 +676,9 @@ void addLuksKey()
     // to slow down brute force attaks. For 256bit keys it's unnecessary. (2.2*10^68 Years)
     cout << "adding extra luks key\n";
     execNoPipe("dd if=/dev/random of=" LUKSKEY " bs=32 count=1 > /dev/null 2>&1");
-    filesystem::permissions(LUKSKEY,filesystem::perms::owner_read|filesystem::perms::owner_write,filesystem::perm_options::replace);
     string res;
     res = exec(string("cryptsetup luksAddKey --iter-time=60 ")+device+" "+inputkey+" " LUKSKEY);
     cout << res;
-    
-    if (toDelete.length()) filesystem::remove(toDelete);
 }
 
 void choseSHAalg()
@@ -599,14 +698,46 @@ void choseSHAalg()
 
 }
 
+void genInitRamFS(string file)
+{
+    switch(systemType)
+    {
+        case Archish:
+            genInitRamFS_archish(file);
+            break;
+        case Ubuntish:
+            genInitRamFS_ubuntish(file);
+            break;
+    }
+}
+
+
+/*
+void test()
+{
+    filesystem::create_directory(DATADIR);
+
+    string imagefile = DATADIR "/initramfs-bytelocker.img";
+    genInitRamFS(imagefile);
+
+    string kernel = findKernel();
+    genEFI(kernel,imagefile);
+
+    bootOptionName = "Bytelocker test";
+    setBootManager();
+}*/
+
+
 int main(int argc, char *argv[])
 {
+
     if (argc<=1)
     {
         printUsage();
         return 0;
     }
     checkDeps();
+
     choseSHAalg();
     bootOptionName = getDistroName() + " Bytelocker";
 
@@ -627,12 +758,15 @@ int main(int argc, char *argv[])
 
         setBootManager();
         cout<<string("\nPlease restart your computer and select the \"") + bootOptionName+"\" option in the UEFI setup or BIOS\nYou will need to provide the passphrase one more time\nrun \"bytelocker setup2\" after reboot to finish setting up\n";
+
+        cleanup();
         return 0;
     }
 
     if (string("setup2").compare(argv[1])==0  )
     {
-        addLuksKey();
+//        addLuksKey();
+        if (!fileExists(LUKSKEY)) error("LUKS keyfile doesn't exist. Have you run setup1 first?");
         string nvaddress;
         nvaddress = findNVPersistentAddress(false);
         string newaddress = uploadToTPM(LUKSKEY,nvaddress );
@@ -641,6 +775,8 @@ int main(int argc, char *argv[])
         string enckey2 = loadFile(LUKSKEY);
         if (enckey.compare(enckey2)!=0) error("Uploading to TPM2 failed");
         cout<<"Done.\n";
+
+        cleanup();
         return 0;
     }
 
