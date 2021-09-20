@@ -1,10 +1,11 @@
-# Welcome to Bytelocker
+# Welcome to Bytelocker Beta!
 
 Unlock encrypted system volume automatically during boot using TPM2 (Trusted Platform Module 2.0) protection, very fast.
 
 ## How to use:
 
-Install an Arch-like distro with a Calamares installer with system disk encryption. Separate boot partition isn't recommended. EFI partition should have about 50MB extra free space.
+Install an Arch-like or Ubuntu distro with a Calamares installer with system disk encryption. Separate boot partition isn't recommended. 
+EFI partition should have some extra free space. 40MB for Arch or 140MB for Ubuntu.
 Update your system and kernel before setting up Bytelocker.
 
 ```bash
@@ -24,11 +25,12 @@ For use with multiple OS-s on the same EFI partition, feel free to modify the #d
 
 ## Updating the kernel or initramfs
 
-Once you are done updating, run sudo bytelocker setup1 again, reboot and run setup2 again.
+Once you are done updating, and the package manager says, changes will take effect after reboot, run sudo bytelocker setup1 before reboot. Password will be required.
+After reboot  run setup2 again.
 
 ## Troubleshooting
 
-If your bytelocker EFI doesn't boot, chose the original EFI with boot manager and use password.
+If your bytelocker EFI doesn't boot, chose the original EFI with boot manager and use password. Then update with setup1.
 
 If bytelocker fails because TPM memory is full, delete some keys left over from previous, deleted OS-es.
 You can list keys by 
@@ -48,8 +50,8 @@ sudo efibootmgr -B b [hexnum]
 
 ## How it works:
 
-When you install Manjaro/Endevour or similar with whole disk encryption, no separate boot partition, a LUKS key will be placed in /crypto_keyfile.bin, which can also be used to unlock the root disk and swap volumes. This file is in encrypted space, and it's used for remounting root and for swap partition without asking your passphrase more times during boot.
-The key in crypto_keyfile.bin  is too large to upload to the TPM2, so Bytelocker, will generate a smaller key and add it to the root LUKS volume, and save it as /crypto_keyfile_bytelocker.bin. This key will have lower iteration count for faster unlocking. Slowing down brute force attacks is necessary for short passphrase keys. For 256 bit random binary keys it will take 2*10^68 years to try all possibilities.
+When you install Manjaro/Endevour/Ubuntu or similar with whole disk encryption, no separate boot partition, a LUKS key will be placed in /crypto_keyfile.bin, which can also be used to unlock the root disk and swap volumes. This file is in encrypted space, and it's used for remounting root and for swap partition without asking your passphrase more times during boot.
+The key in crypto_keyfile.bin is too large to upload to the TPM2, so Bytelocker, will generate a smaller key and add it to the root LUKS volume, and save it as /crypto_keyfile_bytelocker.bin. This key will have lower iteration count for faster unlocking. Slowing down brute force attacks is necessary for short passphrase keys. For 256 bit random binary keys it will take 2*10^68 years to try all possibilities.
 For faster unlocking, bytelocker moves your passphrase to another slot. Slot 0 unlocks the fastest.
 
 After a Calamares installation:
@@ -67,7 +69,7 @@ After bytelocker setup1:
  
 The TPM2 NVRAM location is allocated and the key is uploaded (though it can't be used yet)
 Arch like distros include a copy of /crypto_keyfile.bin in initramfs too. Therefore Bytelocker builds a custom initramfs, without this keyfile, as EFI images are unencrypted. it also adds a hook for retrieving the key from the TPM2 and saving it into the ramdisk named /crypto_keyfile.bin (confusing key filenames, but the other hooks search for this filename). 
-The swap volume, if there is one, gets unlocked by the original /crypto_keyfile.bin, because at this stage the root file system is mounted already and linux will see the real crypto_keyfile.bin, and use it to mount the swap partition. Only mkinitcpio systems are supported.
+The swap volume, if there is one, gets unlocked by the original /crypto_keyfile.bin, because at this stage the root file system is mounted already and linux will see the real crypto_keyfile.bin, and use it to mount the swap partition. Mkinitcpio(arch) and mkinitramfs(ubuntu) systems are supported.
 Then it builds an EFI image using the highest version number kernel it finds in /boot, micro code driver and the custom initramfs included. This EFI image is saved at "/boot/efi/EFI/Bytelocker/Linux.efi"
 Bytelocker adds an EFI boot entry by invoking efibootmgr.
 You can reboot now with the new EFI, and the hook "encrypt" will ask for your password, as the PCRs don't match.
@@ -80,4 +82,4 @@ If the content of Linux.efi or the UEFI settings or firmware changes, you will b
 To see the executed comand lines, set "bool verbose = true;" in the source;
 Plymouth screens are removed, because they may crash.
 
-Tested with Manjaro and Endeavour installations.
+***Tested distros:*** KDE neon user edition, Manjaro, Endeavour
