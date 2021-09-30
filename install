@@ -6,12 +6,12 @@ fi
 
 echo installing dependencies...
 
-pacman -S --needed gcc binutils tpm2-tools mkinitcpio
+#pacman -S --needed gcc binutils tpm2-tools mkinitcpio python3 python3-pip
+apt install -y binutils tpm2-tools python3 python3-pip
+pip install signify
+cp bytelocker /usr/bin/bytelocker
+chmod +x /usr/bin/bytelocker
+mkdir /var/lib/bytelocker
 
-echo compiling...
-g++ -o /usr/bin/bytelocker bytelocker.cpp
-
-if [ -f /usr/bin/bytelocker ] ; then
-echo
- echo Installation successful
-  fi
+echo running setup
+bytelocker setup
