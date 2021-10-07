@@ -52,7 +52,7 @@ After bytelocker setup1:
  LUKS slot 2  <-   passphrase chosen during installation
  ```
  
-Modifies crypttab to call a keyscript instead of using a keyfile. The script will download the key from the TPM2. The TPM2 will unseal the key only if the PCRs match from a free TPM2 persistent handle address.
+Modifies crypttab to call a keyscript instead of using a keyfile. The script will download the key from the TPM2 from the chosen persistent address. The TPM2 will unseal the key only if the PCRs match.
 Generates an EFI image, which includes kernel and initRAMFS onto the unencrypted EFI partition.
 Only mkinitramfs(ubuntu) systems are supported now.
 Adds an EFI boot entry by invoking efibootmgr.
