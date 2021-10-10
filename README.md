@@ -4,14 +4,13 @@ Unlock encrypted system volume automatically during boot using TPM2 (Trusted Pla
 
 ## How to use:
 
-Install an Ubuntu-like distro with system disk encryption. Separate boot partition isn't recommended.  EFI partition should have 140MB free space.
+Install an Ubuntu- or Arch-like distro with system disk encryption. Separate boot partition isn't recommended.  EFI partition should have 140MB free space for Ubuntu.
 Update your system and kernel before setting up Bytelocker.
 
 ```bash
 sudo ./install   
 ```
 When you reboot again, no encryption password will be asked. 
-A lock screen password is recommended now.
 
 For having multiple systems on the same EFI partition, you'll need to modify the source.
 
@@ -52,14 +51,15 @@ After bytelocker setup1:
  LUKS slot 2  <-   passphrase chosen during installation
  ```
  
-Modifies crypttab to call a keyscript instead of using a keyfile. The script will download the key from the TPM2 from the chosen persistent address. The TPM2 will unseal the key only if the PCRs match.
+On Ubutnu, it modifies crypttab to call a keyscript instead of using a keyfile. The script will download the key from the TPM2 from the chosen persistent address. 
+On Arch an initcpio hook will unseal the key into the ramFS.
+The TPM2 will unseal the key only if the PCRs match.
 Generates an EFI image, which includes kernel and initRAMFS onto the unencrypted EFI partition.
-Only mkinitramfs(ubuntu) systems are supported now.
 Adds an EFI boot entry by invoking efibootmgr.
 Calculates the future value of PCR4 based on the EFI image.
-An update.d hook is added. When the kernel or initRAMFS updates, the custom EFI image will be automatically generated again, and the keyfile will be reuploaded to the TPM using the new PCR values.
+An update.d hook or a pacman.d hook is added. When the kernel or initRAMFS updates, the custom EFI image will be automatically generated again, and the keyfile will be reuploaded to the TPM using the new PCR values.
 
-***Tested distros:*** KDE neon user edition, Pop OS
+***Tested distros:*** KDE neon user edition, Pop OS, Endaevour OS
 
 ## Remarks:
 When googling for automatic decryption with TPM setup, many pages contain wrong information. 
@@ -67,4 +67,3 @@ Most common flaws:
  - Using only PCR values as key. An attacker can hash your EFI and find the PCR values. Though, it protects better, if you have BIOS password and secure boot setup.
  - Not sealing keys in NVRAM: Using nvread and nvwrite is wrong. The TPM will give out your encryption key even if the attacker boots from USB. 
  - Keeping decryption key files in unencrypted initramfs in EFI or elsewhere. Search for keys within unencrypted initramfs in /cryptroot/keys  and  /.
-
