@@ -59,7 +59,7 @@ def readfile(filename):
     return output
 
 def writefile(filename,buf,executable=False):
-    fh=os.open(filename,os.O_CREAT | os.O_WRONLY)
+    fh=os.open(filename,os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
 #    fh=open(filename,"wb");
     os.write(fh,buf)
     os.close(fh)
@@ -70,6 +70,11 @@ def error(str):
     print("Error: "+str)
     cleanup()
     exit(-1)
+
+def command_nopipe(cmd):
+    if verbose:
+        print("> "+  cmd)
+    os.system(cmd)
 
 def command(cmd):
 #    retval = subprocess.run(cmd,capture_output=True)
@@ -92,7 +97,31 @@ def decomment(line):
         out.append(ch)
     return out
 
-def patch_crypttab():
+
+def patch_mkinitcpio_conf_arch():
+    lines = readfile("/etc/mkinitcpio.conf").split(b'\n')
+    output = bytearray()
+    patched = False
+    count = 0
+    for line in lines:
+        origline = line
+        line = decomment(line)
+        if line.find(b'HOOKS=')==0 and line.find(b'bytelocker')==-1:
+            patched = True;
+            line.replace(b" plymouth-encrypt",b" encrypt")
+            line.replace(b"plymouth ",b"")
+            line.replace(b" encrypt",b" bytelocker encrypt")
+            origline = line
+        output += origline+b"\n"
+
+
+    if patched:
+        command_nopipe("mv /etc/mkinitcpio.conf /etc/mkinitcpio.conf.old")
+        writefile("/etc/mkinitcpio.conf",output)
+
+
+
+def patch_crypttab_ubuntu():
     lines = readfile("/etc/crypttab").split(b'\n')
     output = bytearray()
     patched = False
@@ -115,7 +144,7 @@ def patch_crypttab():
     assert(count<=1)
     assert(output.find(b"crypto_keyfile.bin")==-1)
     if patched:
-        os.system("mv /etc/crypttab /etc/crypttab.old")
+        command_nopipe("mv /etc/crypttab /etc/crypttab.old")
         writefile("/etc/crypttab",output)
 
     # for extra safety 
@@ -131,7 +160,7 @@ def patch_crypttab():
             patched = True
         output += origline+b'\n'
     if patched:
-        os.system("mv "+confhookfilename+" "+confhookfilename+".old")
+        command_nopipe("mv "+confhookfilename+" "+confhookfilename+".old")
         writefile(confhookfilename,output)
 
  #   print(output.decode())
@@ -186,9 +215,117 @@ def alloc_persistent_address(secondstage):
             break
     writefile(DATADIR+"persistentaddress.txt",persistent_address)
 
+def installhooks_arch():
+    hook = (
+        "#!/usr/bin/bash\n"
+        "run_hook() {\n"
+        "    modprobe -a -q tpm_crb >/dev/null 2>&1\n"
+        "    tpm2_unseal -c "+persistent_address.decode()+" -p pcr:" + alg+":0,2,4 -o /crypto_keyfile.bin >/dev/null 2>&1\n"
+        "if [ ! -f \"/crypto_keyfile.bin\" ]\n"
+        " then\n"
+        " echo Bytelocker could not decrypt system volume automatically\n"
+        " echo\n"
+        " echo\n"
+        " fi\n"
+        "}\n"
+        )
+
+    installer = (
+        "#!/bin/bash\n"
+        "build() {\n"
+        "    local mod\n"
+        "    add_module \"tpm_crb\"\n"
+        "    add_binary \"tpm2_unseal\"\n"
+        "    add_binary \"/usr/lib/libtss2-tcti-device.so\"\n"
+        "    add_runscript\n"
+        "}\n"
+        "help() {\n"
+        "\tcat <<HELPEOF\n"
+        "retrives the system disk encryption key from the TPM2, which will unseal it if the PCRs match\n"
+        "HELPEOF\n"
+        "}\n"
+    )
+
+    postupdate = (
+        "[Trigger]\n"
+        "Operation = Install\n"
+        "Operation = Upgrade\n"
+        "Type = Package\n"
+        "Target = linux\n"
+        "Target = fwupd\n"
+        "Target = systemd\n"
+        "Target = linux514-tkg-cacule\n"
+        "Target = edk2-shell\n"
+        "\n"
+        "[Action]\n"
+        "Description =Updating bytelocker EFI and PCRs\n"
+        "When = PostTransaction\n"
+        "Exec = /usr/bin/bytelocker buildefi\n"
+    )
+
+    writefile("/usr/lib/initcpio/hooks/bytelocker",hook.encode(),True)
+    writefile("/usr/lib/initcpio/install/bytelocker",installer.encode(),True)
+    mkdirsafe("/etc/pacman.d/hooks")
+    writefile("/etc/pacman.d/hooks/99-bytelocker.hook",postupdate.encode())
+
+def findkernel_and_initramfs(writeimage):
+    global kernel
+    global initrd
+    global initrd_no_ucode
+    kernel = "/boot/vmlinuz"
+    initrd = "/boot/initrd.img"
+
+    lines = readfile("/boot/grub/grub.cfg").split(b'\n')
+    menuentry = 0;
+    for line in lines:
+        origline = line
+        line = decomment(line)
+        if line.find(b'menuentry')==0:
+            menuentry = menuentry+1
+
+        if menuentry==1:
+            if line.find(b'\tlinux')==0:
+                i = 6;
+                while len(line)>i and line[i]!=ord('/'):
+                    i+=1
+                kernel = line[i:].split(b' ')[0].decode()
+
+            if line.find(b'\tinitrd')==0:
+                i = 7;
+                while len(line)>i and line[i]!=ord('/'):
+                    i+=1
+                initrdlist = line[i:].split(b' ')
+                if len(initrdlist)==1:
+                    initrd_no_ucode = initrd = initrdlist[0].decode()
+                else:
+                    if writeimage:
+                        image = bytearray()
+                        for img in initrdlist:
+                            image += readfile(img.decode())
+                        initrd = "/tmp/initrd_combined"
+                        writefile(initrd,image)
+                    else:
+                        initrd = ""
+                    initrd_no_ucode = initrdlist[1].decode()
+
+    print ("initrd found: "+initrd)
+    print ("kernel found: "+kernel)
 
 
-def installhooks():
+def buildefi():
+    findkernel_and_initramfs(True)
+    command_nopipe("cat /proc/cmdline > /tmp/kernel-command-line.txt\n")
+    command_nopipe(
+        "objcopy"
+        " --add-section .osrel=\"/usr/lib/os-release\" --change-section-vma .osrel=0x30000 "
+        "--add-section .cmdline=\"/tmp/kernel-command-line.txt\" --change-section-vma .cmdline=0x38000 "
+        "--add-section .linux=\"" + kernel + "\" --change-section-vma .linux=0x40000 "
+        "--add-section .initrd=\"" + initrd+ "\" --change-section-vma .initrd=0x2000000 "  # leaving 31MB space for kernel
+        "\"/usr/lib/systemd/boot/efi/linuxx64.efi.stub\" \""+EFIFILE+"\"\n"
+    )
+
+
+def installhooks_ubuntu():
     initrdhook=(
         "#!/bin/sh\n"
         " if [ ! -f \"./firsttry\" ]; then\n"
@@ -228,19 +365,10 @@ def installhooks():
         )
     writefile("/etc/initramfs-tools/hooks/bytelocker",etchook.encode(),True);
 
-    kernel = "/boot/vmlinuz"
-    initrd = "/boot/initrd.img"
     postupdatehook=(
         "#!/bin/sh\n"
-        "cat /proc/cmdline > "+DATADIR+"kernel-command-line.txt\n"
-        "objcopy"
-        " --add-section .osrel=\"/usr/lib/os-release\" --change-section-vma .osrel=0x30000 "
-        "--add-section .cmdline=\"" +DATADIR+"kernel-command-line.txt\" --change-section-vma .cmdline=0x38000 "
-        "--add-section .linux=\"" + kernel + "\" --change-section-vma .linux=0x40000 "
-        "--add-section .initrd=\"" + initrd+ "\" --change-section-vma .initrd=0x2000000 "  # leaving 31MB space for kernel
-        "\"/usr/lib/systemd/boot/efi/linuxx64.efi.stub\" \""+EFIFILE+"\"\n"
         "echo Hello from post-update.d\n"
-        "bytelocker uploadkey\n"
+        "bytelocker buildefi\n"
     )
 
     mkdirsafe("/etc/initramfs")
@@ -248,8 +376,14 @@ def installhooks():
     writefile("/etc/initramfs/post-update.d/bytelocker",postupdatehook.encode(),True)
     
 def checkdeps():
-    if not exists("/usr/sbin/update-initramfs"):
-        error("Only mkinitramfs systems are supported now")
+    global distro
+    if exists("/usr/sbin/update-initramfs"):
+        distro = "ubuntu"
+        return
+    if exists("/usr/bin/mkinitcpio"):
+        distro = "arch"
+        return
+    error("Unsupported initRAMFS system")
 
 def addBytelockerKey():
     if exists(LUKSKEY):
@@ -331,51 +465,26 @@ def addEFIEntry():
          bootOptionName+=b" Bytelocker"
 
     bootcmd = "efibootmgr --create --disk /dev/"+efidevice.decode()+" --part "+ part.to_bytes(1,'big').decode()  +" --label \"" +bootOptionName.decode()+ "\" --loader \"" +  EFIFILE_EFI_STYLE + "\" --verbose"; 
-    print(bootcmd)
-    os.system(bootcmd)
+    command_nopipe(bootcmd)
     writefile(DATADIR + "/bootmgrcdm",bootcmd.encode())
     return
 
 def choseAlg():
-    res = command("tpm2_getcap algorithms")
+    res = command("tpm2_pcrread sha256:4")
     global alg
-    if res.find(b"sha256:")!=-1:
+    if res.find(b" 0x")!=-1:
         alg='sha256'
         return
-    if res.find(b"sha1:")!=-1:
+    res = command("tpm2_pcrread sha1:4")
+    if res.find(b" 0x")!=-1:
         alg='sha1'
         return
     error("Can't access TPM2\nPlease make sure, TPM is enabled in your BIOS setup")
     return
 
-#entrypoint
-choseAlg()
-checkdeps()
-parser = argparse.ArgumentParser()
-parser.add_argument("-v", action="store_true", help="show executed commands")
-#parser.add_argument("setup",help="Set up automatic unlocking of root LUKS volume")
-parser.add_argument('command',choices=['setup','uploadkey'])
-parser.add_argument("-a",action="store_true",help="Do not calculate expected PCRS, use actual")
-args = parser.parse_args()
-#verbose = args.v     # defaulting to verbose
-
-choseAlg()
-
-if args.command=='setup':
-    findDevice()
-    alloc_persistent_address(False)
-    print("Persistent handle: "+persistent_address.decode())
-    addBytelockerKey()
-    patch_crypttab()
-    installhooks()
-    cleanup()
-    mkdirsafe("/boot/efi/EFI/BYTELOCKER")
-    print("Updating initramfs")
-    os.system("update-initramfs -u")
-    addEFIEntry()
-    exit(0)
-
-if args.command=='uploadkey':  #should be called only from the post update hook by update-initramfs
+def setup2():
+    print("building custom EFI image")
+    buildefi()
     print("Uploading and sealing LUKS key with estimated PCR values")
     alloc_persistent_address(True)
 
@@ -404,3 +513,52 @@ if args.command=='uploadkey':  #should be called only from the post update hook 
     cleanup()
     print ("\n\nBytelocker done. You can reboot now with the newly created EFI Boot entry and no LUKS password should be asked.")
     exit(0)
+
+def mainsetup():
+    findDevice()
+    alloc_persistent_address(False)
+    print("Persistent handle: "+persistent_address.decode())
+
+    addBytelockerKey()
+
+    if distro=="ubuntu":
+        patch_crypttab_ubuntu()
+        installhooks_ubuntu()
+        mkdirsafe("/boot/efi/EFI/BYTELOCKER")
+        print("Updating initramfs")
+        command_nopipe("update-initramfs -u")
+
+    if distro=="arch":
+        patch_mkinitcpio_conf_arch()
+        installhooks_arch()
+        mkdirsafe("/boot/efi/EFI/BYTELOCKER")
+        print("Updating initramfs")
+        findkernel_and_initramfs(False)
+        command_nopipe("mkinitcpio -g "+initrd_no_ucode)
+        setup2()
+
+
+    cleanup()
+    addEFIEntry()
+    exit(0)
+
+
+
+#entrypoint
+choseAlg()
+checkdeps()
+parser = argparse.ArgumentParser()
+parser.add_argument("-v", action="store_true", help="show executed commands")
+#parser.add_argument("setup",help="Set up automatic unlocking of root LUKS volume")
+parser.add_argument('command',choices=['setup','buildefi'])
+parser.add_argument("-a",action="store_true",help="Do not calculate expected PCRS, use actual")
+args = parser.parse_args()
+#verbose = args.v     # defaulting to verbose
+
+choseAlg()
+
+if args.command=='setup':
+    mainsetup()
+
+if args.command=='buildefi':  #should be called only from the post update hook by update-initramfs
+    setup2()
