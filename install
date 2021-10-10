@@ -6,7 +6,7 @@ fi
 
 echo installing dependencies...
 
-#pacman -S --needed gcc binutils tpm2-tools mkinitcpio python3 python3-pip
+pacman -S --needed binutils tpm2-tools mkinitcpio python python-pip
 apt install -y binutils tpm2-tools python3 python3-pip
 pip install signify
 cp bytelocker /usr/bin/bytelocker
