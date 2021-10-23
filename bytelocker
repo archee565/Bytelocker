@@ -512,7 +512,6 @@ def setup2():
 
     cleanup()
     print ("\n\nBytelocker done. You can reboot now with the newly created EFI Boot entry and no LUKS password should be asked.")
-    exit(0)
 
 def mainsetup():
     findDevice()
@@ -527,6 +526,9 @@ def mainsetup():
         mkdirsafe("/boot/efi/EFI/BYTELOCKER")
         print("Updating initramfs")
         command_nopipe("update-initramfs -u")
+        cleanup()
+        addEFIEntry()
+
 
     if distro=="arch":
         patch_mkinitcpio_conf_arch()
@@ -535,13 +537,9 @@ def mainsetup():
         print("Updating initramfs")
         findkernel_and_initramfs(False)
         command_nopipe("mkinitcpio -g "+initrd_no_ucode)
+        cleanup()
+        addEFIEntry()
         setup2()
-
-
-    cleanup()
-    addEFIEntry()
-    exit(0)
-
 
 
 #entrypoint
