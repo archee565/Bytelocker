@@ -106,17 +106,21 @@ def patch_mkinitcpio_conf_arch():
     for line in lines:
         origline = line
         line = decomment(line)
+        if line.find(b"FILES=")==0:
+            patched = True
+            origline = b"#"+line+b" #removed by Bytelocker"
         if line.find(b'HOOKS=')==0 and line.find(b'bytelocker')==-1:
-            patched = True;
-            line.replace(b" plymouth-encrypt",b" encrypt")
-            line.replace(b"plymouth ",b"")
-            line.replace(b" encrypt",b" bytelocker encrypt")
+            patched = True
+            line = line.replace(b" plymouth-encrypt",b" encrypt")
+            line = line.replace(b"plymouth ",b"")
+            line = line.replace(b" encrypt",b" bytelocker encrypt")
+            print(line)
             origline = line
         output += origline+b"\n"
 
-
     if patched:
-        command_nopipe("mv /etc/mkinitcpio.conf /etc/mkinitcpio.conf.old")
+        if not exists("/etc/mkinitcpio.conf.old"):
+            command_nopipe("mv /etc/mkinitcpio.conf /etc/mkinitcpio.conf.old")
         writefile("/etc/mkinitcpio.conf",output)
 
 
@@ -219,6 +223,7 @@ def installhooks_arch():
     hook = (
         "#!/usr/bin/bash\n"
         "run_hook() {\n"
+        "    echo Hello Bytelocker\n"
         "    modprobe -a -q tpm_crb >/dev/null 2>&1\n"
         "    tpm2_unseal -c "+persistent_address.decode()+" -p pcr:" + alg+":0,2,4 -o /crypto_keyfile.bin >/dev/null 2>&1\n"
         "if [ ! -f \"/crypto_keyfile.bin\" ]\n"
@@ -263,8 +268,8 @@ def installhooks_arch():
         "Exec = /usr/bin/bytelocker buildefi\n"
     )
 
-    writefile("/usr/lib/initcpio/hooks/bytelocker",hook.encode(),True)
-    writefile("/usr/lib/initcpio/install/bytelocker",installer.encode(),True)
+    writefile("/usr/lib/initcpio/hooks/bytelocker",hook.encode(),False)
+    writefile("/usr/lib/initcpio/install/bytelocker",installer.encode(),False)
     mkdirsafe("/etc/pacman.d/hooks")
     writefile("/etc/pacman.d/hooks/99-bytelocker.hook",postupdate.encode())
 
