@@ -313,6 +313,16 @@ def findkernel_and_initramfs(writeimage):
                         initrd = ""
                     initrd_no_ucode = initrdlist[1].decode()
 
+    if not exists(initrd):
+        initrd = "/boot"+initrd;
+        if not exists(initrd):
+            error("Can't find initRD");
+
+    if not exists(kernel):
+        kernel = "/boot"+kernel;
+        if not exists(kernel):
+            error("Can't find kernel");
+
     print ("initrd found: "+initrd)
     print ("kernel found: "+kernel)
 
