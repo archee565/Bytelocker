@@ -14,6 +14,7 @@ When you reboot again, no encryption password will be asked.
 
 For having multiple systems on the same EFI partition, you'll need to modify the source.
 
+
 ## Known bugs:
 
 - The EFI partition is assumed to be mounted at /boot/efi, which isn't the case on every Arch linux.
