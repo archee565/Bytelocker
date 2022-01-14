@@ -65,7 +65,7 @@ Adds an EFI boot entry by invoking efibootmgr.
 Calculates the future value of PCR4 based on the EFI image.
 An update.d hook or a pacman.d hook is added. When the kernel or initRAMFS updates, the custom EFI image will be automatically generated again, and the keyfile will be reuploaded to the TPM using the new PCR values.
 
-***Tested distros:*** KDE neon user edition, Pop OS, Endaevour OS
+***Tested distros:*** Kubuntu, Pop OS, Endaevour OS, Manajaro
 
 ## Remarks:
 When googling for automatic decryption with TPM setup, many pages contain wrong information. 
