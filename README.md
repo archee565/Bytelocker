@@ -16,6 +16,7 @@ For having multiple systems on the same EFI partition, you'll need to modify the
 
 ## Known bugs:
 
+- Stopped working with Ubuntu Jammy
 - The EFI partition is assumed to be mounted at /boot/efi, which isn't the case on every Arch linux.
 - On Ubuntu/Debian based systems distro upgrade will fail, beacuse tpm2_tools are not accessible in the middle of the upgrade process. Remove the bytelocker hooks before system upgrade, and run "bytelocker install" again after upgrade.
 - on Pop OS default install the efi partition size might be too small as the OS grows.
