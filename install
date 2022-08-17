@@ -4,14 +4,14 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-echo installing dependencies...
-
-pacman -S --needed binutils tpm2-tools mkinitcpio python python-pip
-apt install -y binutils tpm2-tools python3 python3-pip
-pip install signify
 cp bytelocker /usr/bin/bytelocker
 chmod +x /usr/bin/bytelocker
 mkdir /var/lib/bytelocker
+
+echo installing dependencies...
+pacman -S --needed binutils tpm2-tools mkinitcpio python python-pip
+apt install -y binutils tpm2-tools python3 python3-pip systemd-boot
+pip install signify
 
 echo running setup
 bytelocker setup
