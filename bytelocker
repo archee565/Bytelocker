@@ -280,38 +280,40 @@ def findkernel_and_initramfs(writeimage):
     kernel = "/boot/vmlinuz"
     initrd = "/boot/initrd.img"
 
-    lines = readfile("/boot/grub/grub.cfg").split(b'\n')
-    menuentry = 0;
-    for line in lines:
-        origline = line
-        line = decomment(line)
-        if line.find(b'menuentry')==0:
-            menuentry = menuentry+1
 
-        if menuentry==1:
-            if line.find(b'\tlinux')==0:
-                i = 6;
-                while len(line)>i and line[i]!=ord('/'):
-                    i+=1
-                kernel = line[i:].split(b' ')[0].decode()
+    if not exists(initrd) or not exists(kernel):
+        lines = readfile("/boot/grub/grub.cfg").split(b'\n')
+        menuentry = 0;
+        for line in lines:
+            origline = line
+            line = decomment(line)
+            if line.find(b'menuentry')==0:
+                menuentry = menuentry+1
 
-            if line.find(b'\tinitrd')==0:
-                i = 7;
-                while len(line)>i and line[i]!=ord('/'):
-                    i+=1
-                initrdlist = line[i:].split(b' ')
-                if len(initrdlist)==1:
-                    initrd_no_ucode = initrd = initrdlist[0].decode()
-                else:
-                    if writeimage:
-                        image = bytearray()
-                        for img in initrdlist:
-                            image += readfile(img.decode())
-                        initrd = "/tmp/initrd_combined"
-                        writefile(initrd,image)
+            if menuentry==1:
+                if line.find(b'\tlinux')==0:
+                    i = 6;
+                    while len(line)>i and line[i]!=ord('/'):
+                        i+=1
+                    kernel = line[i:].split(b' ')[0].decode()
+
+                if line.find(b'\tinitrd')==0:
+                    i = 7;
+                    while len(line)>i and line[i]!=ord('/'):
+                        i+=1
+                    initrdlist = line[i:].split(b' ')
+                    if len(initrdlist)==1:
+                        initrd_no_ucode = initrd = initrdlist[0].decode()
                     else:
-                        initrd = ""
-                    initrd_no_ucode = initrdlist[1].decode()
+                        if writeimage:
+                            image = bytearray()
+                            for img in initrdlist:
+                                image += readfile(img.decode())
+                            initrd = "/tmp/initrd_combined"
+                            writefile(initrd,image)
+                        else:
+                            initrd = ""
+                        initrd_no_ucode = initrdlist[1].decode()
 
     if not exists(initrd):
         initrd = "/boot"+initrd;
